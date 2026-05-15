@@ -9,14 +9,16 @@ const MAX_BODY_SIZE = parseInt(process.env.MAX_BODY_SIZE_MB || '10', 10) * 1024 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 const DEEPSEEK_URL = 'https://api.deepseek.com/anthropic/v1/messages';
 
-if (!ANTHROPIC_API_KEY) {
-  console.error('ANTHROPIC_API_KEY env var is required');
+if (!ANTHROPIC_API_KEY && !DEEPSEEK_API_KEY) {
+  console.error('At least one of ANTHROPIC_API_KEY or DEEPSEEK_API_KEY must be set');
   process.exit(1);
 }
 if (!DEEPSEEK_API_KEY) {
   console.error('DEEPSEEK_API_KEY env var is required');
   process.exit(1);
 }
+
+const ANTHROPIC_AUTH_MODE = ANTHROPIC_API_KEY ? 'api-key' : 'passthrough';
 
 function routeRequest(model) {
   if (model && model.includes('deepseek')) return 'deepseek';
@@ -82,12 +84,18 @@ async function proxyRequest(req, res) {
   const headers = {};
   for (const [k, v] of Object.entries(req.headers)) {
     if (k === 'host') continue;
-    if (k === 'x-api-key') continue;
+    if (k === 'x-api-key') {
+      if (route === 'deepseek' || ANTHROPIC_AUTH_MODE === 'api-key') continue;
+      headers[k] = v;
+      continue;
+    }
     if (k === 'content-length') { headers[k] = v; continue; }
     if (k.startsWith('anthropic-beta') && route === 'deepseek') continue;
     headers[k] = v;
   }
-  headers['x-api-key'] = upstream.key;
+  if (ANTHROPIC_AUTH_MODE === 'api-key' || route === 'deepseek') {
+    headers['x-api-key'] = upstream.key;
+  }
   headers['content-type'] = 'application/json';
 
   const controller = new AbortController();
@@ -138,6 +146,7 @@ const server = createServer((req, res) => {
 
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`cc-proxy listening on 127.0.0.1:${PORT}`);
+  console.log(`  Anthropic auth: ${ANTHROPIC_AUTH_MODE}`);
   console.log(`  Anthropic: ${ANTHROPIC_URL}`);
   console.log(`  DeepSeek:  ${DEEPSEEK_URL}`);
 });

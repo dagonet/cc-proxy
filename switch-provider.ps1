@@ -21,7 +21,8 @@
 .NOTES
     Prerequisites:
       - For deepseek and mixed: DEEPSEEK_API_KEY user env var must be set.
-      - For mixed only: ANTHROPIC_API_KEY user env var must be set.
+      - For mixed: optionally set ANTHROPIC_API_KEY user env var for API-key mode.
+        If omitted, proxy passes through subscription auth for Anthropic-bound requests.
       - For mixed only: cc-proxy server must be running (node server.js).
 #>
 
@@ -82,15 +83,12 @@ switch ($Provider) {
         }
 
         $anthropicKey = [Environment]::GetEnvironmentVariable('ANTHROPIC_API_KEY', 'User')
-        if ([string]::IsNullOrWhiteSpace($anthropicKey)) {
-            Write-Error "ANTHROPIC_API_KEY is not set as a user environment variable."
-            Write-Error "Get your API key from https://console.anthropic.com/ and set it with:"
-            Write-Error "[Environment]::SetEnvironmentVariable('ANTHROPIC_API_KEY', 'sk-ant-...', 'User'), then restart PowerShell."
-            return
-        }
+        $usingApiKey = -not [string]::IsNullOrWhiteSpace($anthropicKey)
 
         $env:ANTHROPIC_BASE_URL             = 'http://127.0.0.1:3456'
-        $env:ANTHROPIC_AUTH_TOKEN           = 'proxy-placeholder'
+        if ($usingApiKey) {
+            $env:ANTHROPIC_AUTH_TOKEN       = 'proxy-placeholder'
+        }
         $env:ANTHROPIC_DEFAULT_OPUS_MODEL   = 'claude-opus-4-7'
         $env:ANTHROPIC_DEFAULT_SONNET_MODEL = 'deepseek-v4-pro[1m]'
         $env:ANTHROPIC_DEFAULT_HAIKU_MODEL  = 'deepseek-v4-flash'
@@ -102,6 +100,11 @@ switch ($Provider) {
         Write-Host "  Sonnet  → DeepSeek (deepseek-v4-pro[1m])"
         Write-Host "  Haiku   → DeepSeek (deepseek-v4-flash)"
         Write-Host "  Subagent → DeepSeek (deepseek-v4-flash)"
+        if ($usingApiKey) {
+            Write-Host "  Anthropic auth → API key (ANTHROPIC_API_KEY)"
+        } else {
+            Write-Host "  Anthropic auth → passthrough (subscription token)"
+        }
         Write-Host ""
         Write-Host "Make sure the proxy is running: node server.js" -ForegroundColor DarkGray
     }

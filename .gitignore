@@ -2,3 +2,5 @@
 .proxy-stdout.log
 .proxy-stderr.log
 node_modules/
+.claude/
+CLAUDE.md

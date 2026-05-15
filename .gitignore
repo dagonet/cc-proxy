@@ -1,0 +1,4 @@
+.proxy-pid
+.proxy-stdout.log
+.proxy-stderr.log
+node_modules/

@@ -176,8 +176,26 @@ function Start-Proxy {
     }
 
     Write-Host "Starting proxy server..." -ForegroundColor DarkGray -NoNewline
-    $outLog = Join-Path $PSScriptRoot '.proxy-stdout.log'
-    $errLog = Join-Path $PSScriptRoot '.proxy-stderr.log'
+
+    $logsDir = Join-Path $PSScriptRoot '.logs'
+    if (-not (Test-Path $logsDir)) { New-Item -ItemType Directory -Path $logsDir -Force > $null }
+
+    $outLog = Join-Path $logsDir 'proxy-stdout.log'
+    $errLog = Join-Path $logsDir 'proxy-stderr.log'
+
+    # Rotate logs: keep last 10 of each
+    foreach ($base in @('proxy-stdout', 'proxy-stderr')) {
+        $last = Join-Path $logsDir "${base}.9.log"
+        if (Test-Path $last) { Remove-Item $last -Force }
+        for ($i = 8; $i -ge 0; $i--) {
+            $old = Join-Path $logsDir "${base}.${i}.log"
+            $new = Join-Path $logsDir "${base}.$($i + 1).log"
+            if (Test-Path $old) { Move-Item $old $new -Force }
+        }
+        $current = Join-Path $logsDir "${base}.log"
+        if (Test-Path $current) { Move-Item $current (Join-Path $logsDir "${base}.0.log") -Force }
+    }
+
     $proc = Start-Process -FilePath 'node' -ArgumentList $serverScript `
         -WindowStyle Hidden -PassThru `
         -RedirectStandardOutput $outLog -RedirectStandardError $errLog
@@ -191,7 +209,7 @@ function Start-Proxy {
     if (Test-ProxyRunning) {
         Write-Host " ready (pid $($proc.Id))" -ForegroundColor Green
     } else {
-        Write-Warning "Proxy did not respond within 15s -- check .proxy-stderr.log"
+        Write-Warning "Proxy did not respond within 15s -- check .logs/proxy-stderr.log"
     }
 }
 
@@ -263,7 +281,7 @@ function Set-Mode {
                 Write-Warning "Requests to proxy will fail until the proxy is started."
             } else {
                 Write-Host ""
-                Write-Host "Proxy is running at 127.0.0.1:$proxyPort (logs: .proxy-stdout.log .proxy-stderr.log)" -ForegroundColor DarkGray
+                Write-Host "Proxy is running at 127.0.0.1:$proxyPort (logs: .logs/)" -ForegroundColor DarkGray
             }
         }
     }

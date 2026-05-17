@@ -1,6 +1,5 @@
 .proxy-pid
-.proxy-stdout.log
-.proxy-stderr.log
+.logs/
 node_modules/
 .claude/
 CLAUDE.md

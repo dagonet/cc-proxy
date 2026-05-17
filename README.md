@@ -39,7 +39,7 @@ claude                               # launch Claude Code
 . .\cc-proxy.ps1 stop                # stop proxy + reset env
 ```
 
-The proxy runs as a hidden background process. Logs go to `.proxy-stdout.log` and `.proxy-stderr.log`.
+The proxy runs as a hidden background process. Logs go to `.logs/proxy-stdout.log` (rolling, last 10 kept).
 
 ### Linux / Mac
 
@@ -130,7 +130,7 @@ Dot-source to apply env vars to the current PowerShell session. Run BEFORE `clau
 
 ## Verifying routing
 
-Every proxied request logs one line to `.proxy-stdout.log`:
+Every proxied request logs one line to `.logs/proxy-stdout.log`:
 
 ```
 2026-05-17T09:20:43Z #1 [deepseek] model=deepseek-v4-pro status=200
@@ -145,7 +145,7 @@ The `[deepseek]` or `[anthropic]` tag is the actual backend that handled the req
 **Verification workflow:**
 ```powershell
 # Tail the log in one terminal
-Get-Content .proxy-stdout.log -Wait
+Get-Content .logs/proxy-stdout.log -Wait
 
 # Trigger a coder agent in Claude Code, then check for:
 # [deepseek] model=deepseek-v4-pro status=200

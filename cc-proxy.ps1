@@ -4,13 +4,13 @@
 
 .DESCRIPTION
     Actions:
-      start  — Start the cc-proxy process (if not already running).
-      stop   — Stop the proxy process and reset env to Anthropic defaults.
+      start  -- Start the cc-proxy process (if not already running).
+      stop   -- Stop the proxy process and reset env to Anthropic defaults.
 
     Modes (-Mode):
-      anthropic — Clear overrides, use built-in Claude Code defaults.
-      deepseek  — Route ALL models to DeepSeek (Anthropic-compatible endpoint).
-      mixed     — Route Opus to Anthropic, Sonnet/Haiku/subagents to DeepSeek.
+      anthropic -- Clear overrides, use built-in Claude Code defaults.
+      deepseek  -- Route ALL models to DeepSeek (Anthropic-compatible endpoint).
+      mixed     -- Route Opus to Anthropic, Sonnet/Haiku/subagents to DeepSeek.
                   Requires the proxy to be running.
 
     Action and Mode can be combined:  . .\cc-proxy.ps1 start -Mode mixed
@@ -91,18 +91,18 @@ function Test-ProxyRunning {
 }
 
 function Show-Help {
-    Write-Host "cc-proxy — Claude Code multi-provider launcher" -ForegroundColor Cyan
+    Write-Host "cc-proxy -- Claude Code multi-provider launcher" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "Usage:" -ForegroundColor White
-    Write-Host "  . .\cc-proxy.ps1 [start|stop] [-Mode anthropic|deepseek|mixed] [-Force]"
+    Write-Host '  . .\cc-proxy.ps1 start|stop -Mode anthropic|deepseek|mixed -Force'
     Write-Host ""
     Write-Host "Actions:" -ForegroundColor White
-    Write-Host "  start       Start the proxy on 127.0.0.1:$proxyPort (no-op if already running)."
+    Write-Host "  start       Start the proxy on 127.0.0.1:${proxyPort}. No-op if already running."
     Write-Host "  stop        Stop the proxy + reset env to Anthropic defaults."
     Write-Host "              Prompts for confirmation unless -Force is used."
     Write-Host ""
-    Write-Host "Modes (-Mode):" -ForegroundColor White
-    Write-Host "  anthropic   Use Claude Code defaults (Anthropic subscription)."
+    Write-Host "Modes -Mode:" -ForegroundColor White
+    Write-Host "  anthropic   Use Claude Code defaults - Anthropic subscription."
     Write-Host "              Clears all overrides. No proxy needed."
     Write-Host ""
     Write-Host "  deepseek    Route ALL models to DeepSeek."
@@ -110,16 +110,16 @@ function Show-Help {
     Write-Host "              Requires: DEEPSEEK_API_KEY"
     Write-Host ""
     Write-Host "  mixed       Mix providers within one session."
-    Write-Host "              Opus    -> Anthropic (claude-opus-4-7)"
-    Write-Host "              Sonnet  -> DeepSeek (deepseek-v4-pro)"
-    Write-Host "              Haiku   -> DeepSeek (deepseek-v4-flash)"
-    Write-Host "              Subagent-> DeepSeek (deepseek-v4-flash)"
+    Write-Host "              Opus    -> Anthropic claude-opus-4-7"
+    Write-Host "              Sonnet  -> DeepSeek deepseek-v4-pro"
+    Write-Host "              Haiku   -> DeepSeek deepseek-v4-flash"
+    Write-Host "              Subagent-> DeepSeek deepseek-v4-flash"
     Write-Host "              Requires: DEEPSEEK_API_KEY"
-    Write-Host "              Optional: ANTHROPIC_API_KEY (passthrough auth if omitted)"
+    Write-Host "              Optional: ANTHROPIC_API_KEY, passthrough auth if omitted"
     Write-Host ""
     Write-Host "Examples:" -ForegroundColor White
     Write-Host "  . .\cc-proxy.ps1 start -Mode mixed    # Start proxy + mixed routing"
-    Write-Host "  . .\cc-proxy.ps1 -Mode deepseek       # DeepSeek-only (no proxy)"
+    Write-Host "  . .\cc-proxy.ps1 -Mode deepseek       # DeepSeek-only, no proxy"
     Write-Host "  . .\cc-proxy.ps1 -Mode anthropic      # Reset to defaults"
     Write-Host "  . .\cc-proxy.ps1 stop                 # Stop proxy + reset"
     Write-Host "  . .\cc-proxy.ps1 stop -Force          # Stop without confirmation"
@@ -137,8 +137,8 @@ function Stop-Proxy {
         $raw = Get-Content $pidFile -Raw -ErrorAction SilentlyContinue
         $proxyPid = if ($raw) { $raw.Trim() } else { '' }
         if ($proxyPid -and $proxyPid -ne $PID) {
-            try { Stop-Process -Id $proxyPid -Force -ErrorAction Stop; Write-Host "Proxy stopped (pid $proxyPid)." -ForegroundColor Yellow }
-            catch { Write-Host "Proxy process $proxyPid not found (already stopped)." -ForegroundColor DarkGray }
+            try { Stop-Process -Id $proxyPid -Force -ErrorAction Stop; Write-Host "Proxy stopped, pid $proxyPid." -ForegroundColor Yellow }
+            catch { Write-Host "Proxy process $proxyPid not found, already stopped." -ForegroundColor DarkGray }
         } else {
             Write-Host "Proxy PID is invalid or matches current process -- skipping." -ForegroundColor Yellow
         }
@@ -148,7 +148,7 @@ function Stop-Proxy {
         $listener = Get-NetTCPConnection -LocalPort $proxyPort -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($listener -and $listener.OwningProcess) {
             $foundPid = $listener.OwningProcess
-            try { Stop-Process -Id $foundPid -Force -ErrorAction Stop; Write-Host "Proxy stopped (pid $foundPid, found via port $proxyPort)." -ForegroundColor Yellow }
+            try { Stop-Process -Id $foundPid -Force -ErrorAction Stop; Write-Host "Proxy stopped, pid $foundPid, found via port $proxyPort." -ForegroundColor Yellow }
             catch { Write-Host "Failed to stop pid $foundPid - check manually." -ForegroundColor Red }
         } else {
             Write-Host "  Could not identify process on port $proxyPort." -ForegroundColor Red
@@ -207,7 +207,7 @@ function Start-Proxy {
         $timeout--
     }
     if (Test-ProxyRunning) {
-        Write-Host " ready (pid $($proc.Id))" -ForegroundColor Green
+        Write-Host " ready, pid $($proc.Id)" -ForegroundColor Green
     } else {
         Write-Warning "Proxy did not respond within 15s -- check .logs/proxy-stderr.log"
     }
@@ -222,7 +222,7 @@ function Set-Mode {
 
     switch ($Mode) {
         'anthropic' {
-            Write-Host "Claude Code session reset to Anthropic defaults (overrides cleared)." -ForegroundColor Cyan
+            Write-Host "Claude Code session reset to Anthropic defaults, overrides cleared." -ForegroundColor Cyan
         }
 
         'deepseek' {
@@ -242,7 +242,7 @@ function Set-Mode {
             $env:CLAUDE_CODE_SUBAGENT_MODEL     = 'deepseek-v4-flash'
             $env:CLAUDE_CODE_EFFORT_LEVEL       = 'max'
 
-            Write-Host "Claude Code configured for DeepSeek (all models)." -ForegroundColor Green
+            Write-Host "Claude Code configured for DeepSeek, all models." -ForegroundColor Green
         }
 
         'mixed' {
@@ -265,15 +265,15 @@ function Set-Mode {
             $env:CLAUDE_CODE_SUBAGENT_MODEL     = 'deepseek-v4-flash'
             $env:CLAUDE_CODE_EFFORT_LEVEL       = 'max'
 
-            Write-Host "Claude Code configured for MIXED mode (proxy at 127.0.0.1:3456)." -ForegroundColor Magenta
-            Write-Host "  Opus    -> Anthropic (claude-opus-4-7)"
-            Write-Host "  Sonnet  -> DeepSeek (deepseek-v4-pro)"
-            Write-Host "  Haiku   -> DeepSeek (deepseek-v4-flash)"
-            Write-Host "  Subagent -> DeepSeek (deepseek-v4-flash)"
+            Write-Host "Claude Code configured for MIXED mode, proxy at 127.0.0.1:3456." -ForegroundColor Magenta
+            Write-Host "  Opus    -> Anthropic claude-opus-4-7"
+            Write-Host "  Sonnet  -> DeepSeek deepseek-v4-pro"
+            Write-Host "  Haiku   -> DeepSeek deepseek-v4-flash"
+            Write-Host "  Subagent -> DeepSeek deepseek-v4-flash"
             if ($usingApiKey) {
-                Write-Host "  Anthropic auth -> API key (ANTHROPIC_API_KEY)"
+                Write-Host "  Anthropic auth -> API key, ANTHROPIC_API_KEY"
             } else {
-                Write-Host "  Anthropic auth -> passthrough (subscription token)"
+                Write-Host "  Anthropic auth -> passthrough, subscription token"
             }
 
             if (-not (Test-ProxyRunning)) {
@@ -281,7 +281,7 @@ function Set-Mode {
                 Write-Warning "Requests to proxy will fail until the proxy is started."
             } else {
                 Write-Host ""
-                Write-Host "Proxy is running at 127.0.0.1:$proxyPort (logs: .logs/)" -ForegroundColor DarkGray
+                Write-Host "Proxy is running at 127.0.0.1:${proxyPort}. Logs: .logs/" -ForegroundColor DarkGray
             }
         }
     }
@@ -304,7 +304,7 @@ function Show-Verification {
         }
     }
     if (-not $any) {
-        Write-Host "  (none -- using Claude Code defaults)"
+        Write-Host "  none -- using Claude Code defaults"
     }
 }
 

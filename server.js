@@ -8,6 +8,11 @@ const MAX_BODY_SIZE = parseInt(process.env.MAX_BODY_SIZE_MB || '10', 10) * 1024 
 
 const ANTHROPIC_URL = process.env.ANTHROPIC_UPSTREAM_URL || 'https://api.anthropic.com/v1/messages';
 const DEEPSEEK_URL = process.env.DEEPSEEK_UPSTREAM_URL || 'https://api.deepseek.com/anthropic/v1/messages';
+
+let reqCounter = 0;
+function ts() { return new Date().toISOString(); }
+function log(route, model, msg) { console.log(`${ts()} #${++reqCounter} [${route}] model=${model} ${msg}`); }
+function logErr(route, model, msg) { console.error(`${ts()} #${reqCounter} [${route}] model=${model} ${msg}`); }
 const ANTHROPIC_BASE = process.env.ANTHROPIC_BASE_URL_OVERRIDE || 'https://api.anthropic.com';
 
 if (!ANTHROPIC_API_KEY && !DEEPSEEK_API_KEY) {
@@ -65,20 +70,29 @@ async function proxyRequest(req, res) {
     return;
   }
 
-  let model;
+  let parsed;
   try {
-    model = JSON.parse(body.toString()).model;
+    parsed = JSON.parse(body.toString());
   } catch {
     res.writeHead(400, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'invalid JSON body' }));
     return;
   }
 
+  const model = parsed.model;
   const route = routeRequest(model);
   if (!route) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: `unsupported model: ${model}` }));
     return;
+  }
+
+  // Anthropic requires max_tokens; DeepSeek's API does not.
+  // When Claude Code targets a DeepSeek model it may omit max_tokens.
+  // If the proxy routes that request to Anthropic instead, inject a default.
+  if (route === 'anthropic' && typeof parsed.max_tokens !== 'number') {
+    parsed.max_tokens = 4096;
+    body = Buffer.from(JSON.stringify(parsed));
   }
 
   const query = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
@@ -113,12 +127,12 @@ async function proxyRequest(req, res) {
     const sentKey = headers['x-api-key'] || '<missing>';
     const expectedKey = DEEPSEEK_API_KEY;
     const match = sentKey === expectedKey;
-    console.log(`[deepseek:debug] key match=${match} sent=${sentKey.slice(0, 6)}...${sentKey.slice(-4)} expected=${expectedKey.slice(0, 6)}...${expectedKey.slice(-4)} upstream.key=${(upstream.key || '').slice(0, 6)}...${(upstream.key || '').slice(-4)}`);
+    console.log(`${ts()} [deepseek:debug] key match=${match} sent=${sentKey.slice(0, 6)}...${sentKey.slice(-4)} expected=${expectedKey.slice(0, 6)}...${expectedKey.slice(-4)} upstream.key=${(upstream.key || '').slice(0, 6)}...${(upstream.key || '').slice(-4)}`);
     const hdrSummary = Object.entries(headers).map(([k, v]) => {
       if (k === 'x-api-key') return `${k}=${v.slice(0, 6)}...${v.slice(-4)}`;
       return `${k}=${typeof v === 'string' ? v.slice(0, 60) : v}`;
     }).join(' | ');
-    console.log(`[deepseek:debug] all headers: ${hdrSummary}`);
+    console.log(`${ts()} [deepseek:debug] all headers: ${hdrSummary}`);
   }
 
   const controller = new AbortController();
@@ -151,21 +165,21 @@ async function proxyRequest(req, res) {
     res.end();
 
     if (upstreamRes.status >= 400) {
-      console.log(`[${route}] model=${model} status=${upstreamRes.status} body=${resBody ? resBody.toString().slice(0, 500) : '<empty>'}`);
+      log(route, model, `status=${upstreamRes.status} body=${resBody ? resBody.toString().slice(0, 500) : '<empty>'}`);
     } else {
-      console.log(`[${route}] model=${model} status=${upstreamRes.status}`);
+      log(route, model, `status=${upstreamRes.status}`);
     }
   } catch (err) {
     if (err.name === 'AbortError') {
       res.writeHead(504, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'upstream timeout' }));
-      console.log(`[${route}] model=${model} TIMEOUT`);
+      log(route, model, 'TIMEOUT');
     } else {
       if (!res.headersSent) {
         res.writeHead(502, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'upstream connection failed' }));
       }
-      console.error(`[${route}] model=${model} ERROR: ${err.message}`);
+      logErr(route, model, `ERROR: ${err.message}`);
     }
   } finally {
     clearTimeout(timer);
@@ -233,15 +247,15 @@ async function proxyPassthrough(req, res) {
     res.end();
 
     if (upstreamRes.status >= 400) {
-      console.log(`[passthrough] ${req.method} /v1/${suffix} status=${upstreamRes.status} body=${resBody ? resBody.toString().slice(0, 500) : '<empty>'}`);
+      console.log(`${ts()} [passthrough] ${req.method} /v1/${suffix} status=${upstreamRes.status} body=${resBody ? resBody.toString().slice(0, 500) : '<empty>'}`);
     } else {
-      console.log(`[passthrough] ${req.method} /v1/${suffix} status=${upstreamRes.status}`);
+      console.log(`${ts()} [passthrough] ${req.method} /v1/${suffix} status=${upstreamRes.status}`);
     }
   } catch (err) {
     if (err.name === 'AbortError') {
       res.writeHead(504, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'upstream timeout' }));
-      console.log(`[passthrough] ${req.method} /v1/${suffix} TIMEOUT`);
+      console.log(`${ts()} [passthrough] ${req.method} /v1/${suffix} TIMEOUT`);
     } else {
       if (!res.headersSent) {
         res.writeHead(502, { 'Content-Type': 'application/json' });

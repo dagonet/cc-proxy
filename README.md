@@ -69,7 +69,7 @@ A `cc-proxy.sh` for Linux/Mac is a welcome contribution.
 | `DEEPSEEK_API_KEY` | — | DeepSeek API key (required) |
 | `ANTHROPIC_API_KEY` | — | Anthropic API key (optional — subscription token forwarded if omitted) |
 | `PROXY_PORT` | `3456` | Proxy listen port |
-| `REQUEST_TIMEOUT_MS` | `120000` | Upstream request timeout (2 min) |
+| `REQUEST_TIMEOUT_MS` | `300000` | Upstream request timeout (5 min) |
 | `MAX_BODY_SIZE_MB` | `10` | Max request body size |
 | `ANTHROPIC_UPSTREAM_URL` | `https://api.anthropic.com/v1/messages` | Anthropic endpoint |
 | `DEEPSEEK_UPSTREAM_URL` | `https://api.deepseek.com/anthropic/v1/messages` | DeepSeek endpoint |

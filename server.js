@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 const PORT = parseInt(process.env.PROXY_PORT || '3456', 10);
 const ANTHROPIC_API_KEY = (process.env.ANTHROPIC_API_KEY || '').trim();
 const DEEPSEEK_API_KEY = (process.env.DEEPSEEK_API_KEY || '').trim();
-const REQUEST_TIMEOUT_MS = parseInt(process.env.REQUEST_TIMEOUT_MS || '120000', 10);
+const REQUEST_TIMEOUT_MS = parseInt(process.env.REQUEST_TIMEOUT_MS || '300000', 10);
 const MAX_BODY_SIZE = parseInt(process.env.MAX_BODY_SIZE_MB || '10', 10) * 1024 * 1024;
 
 const ANTHROPIC_URL = process.env.ANTHROPIC_UPSTREAM_URL || 'https://api.anthropic.com/v1/messages';
@@ -135,11 +135,12 @@ async function proxyRequest(req, res) {
     console.log(`${ts()} [deepseek:debug] all headers: ${hdrSummary}`);
   }
 
+  let upstreamRes;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   try {
-    const upstreamRes = await fetch(upstream.url, {
+    upstreamRes = await fetch(upstream.url, {
       method: 'POST',
       headers,
       body,
@@ -152,27 +153,33 @@ async function proxyRequest(req, res) {
       resHeaders[k] = v;
     }
 
-    // Buffer body so we can log it for error status codes
-    let resBody = null;
-    if (upstreamRes.body) {
-      const chunks = [];
-      for await (const chunk of upstreamRes.body) chunks.push(chunk);
-      resBody = Buffer.concat(chunks);
-    }
-
+    // Stream chunks to client as they arrive — avoids buffering the full
+    // response, which causes spurious timeouts on long-thinking requests.
     res.writeHead(upstreamRes.status, resHeaders);
-    if (resBody) res.write(resBody);
+    const errPreview = [];
+    if (upstreamRes.body) {
+      for await (const chunk of upstreamRes.body) {
+        res.write(chunk);
+        if (errPreview.length < 500) errPreview.push(chunk);
+      }
+    }
     res.end();
 
     if (upstreamRes.status >= 400) {
-      log(route, model, `status=${upstreamRes.status} body=${resBody ? resBody.toString().slice(0, 500) : '<empty>'}`);
+      log(route, model, `status=${upstreamRes.status} body=${Buffer.concat(errPreview).toString().slice(0, 500)}`);
     } else {
       log(route, model, `status=${upstreamRes.status}`);
     }
   } catch (err) {
+    // Destroy upstream stream to release the TCP socket back to the pool.
+    if (upstreamRes && upstreamRes.body) {
+      try { upstreamRes.body.destroy(); } catch (_) {}
+    }
     if (err.name === 'AbortError') {
-      res.writeHead(504, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'upstream timeout' }));
+      if (!res.headersSent) {
+        res.writeHead(504, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'upstream timeout' }));
+      }
       log(route, model, 'TIMEOUT');
     } else {
       if (!res.headersSent) {
@@ -218,11 +225,12 @@ async function proxyPassthrough(req, res) {
     }
   }
 
+  let upstreamRes;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   try {
-    const upstreamRes = await fetch(targetUrl, {
+    upstreamRes = await fetch(targetUrl, {
       method: req.method,
       headers,
       body,
@@ -235,26 +243,27 @@ async function proxyPassthrough(req, res) {
       resHeaders[k] = v;
     }
 
-    let resBody = null;
-    if (upstreamRes.body) {
-      const chunks = [];
-      for await (const chunk of upstreamRes.body) chunks.push(chunk);
-      resBody = Buffer.concat(chunks);
-    }
-
     res.writeHead(upstreamRes.status, resHeaders);
-    if (resBody) res.write(resBody);
+    if (upstreamRes.body) {
+      for await (const chunk of upstreamRes.body) res.write(chunk);
+    }
     res.end();
 
     if (upstreamRes.status >= 400) {
-      console.log(`${ts()} [passthrough] ${req.method} /v1/${suffix} status=${upstreamRes.status} body=${resBody ? resBody.toString().slice(0, 500) : '<empty>'}`);
+      // For passthrough, we can't buffer the full body for logging
+      console.log(`${ts()} [passthrough] ${req.method} /v1/${suffix} status=${upstreamRes.status}`);
     } else {
       console.log(`${ts()} [passthrough] ${req.method} /v1/${suffix} status=${upstreamRes.status}`);
     }
   } catch (err) {
+    if (upstreamRes && upstreamRes.body) {
+      try { upstreamRes.body.destroy(); } catch (_) {}
+    }
     if (err.name === 'AbortError') {
-      res.writeHead(504, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'upstream timeout' }));
+      if (!res.headersSent) {
+        res.writeHead(504, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'upstream timeout' }));
+      }
       console.log(`${ts()} [passthrough] ${req.method} /v1/${suffix} TIMEOUT`);
     } else {
       if (!res.headersSent) {

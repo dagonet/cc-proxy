@@ -47,7 +47,8 @@ The proxy itself (`server.js`) is plain Node.js — runs anywhere. The `cc-proxy
 
 ```bash
 export ANTHROPIC_BASE_URL=http://127.0.0.1:3456
-export ANTHROPIC_DEFAULT_OPUS_MODEL=claude-opus-4-7
+# Opus: leave ANTHROPIC_DEFAULT_OPUS_MODEL unset so Claude Code uses its
+# latest built-in Opus default (routed to Anthropic via the "claude" match).
 export ANTHROPIC_DEFAULT_SONNET_MODEL=deepseek-v4-pro
 export ANTHROPIC_DEFAULT_HAIKU_MODEL=deepseek-v4-flash
 export CLAUDE_CODE_SUBAGENT_MODEL=deepseek-v4-flash
@@ -102,7 +103,7 @@ DeepSeek requests always use `DEEPSEEK_API_KEY`. In passthrough mode, client hea
 
 | Claude Code role | Model sent | Routed to |
 |-----------------|------------|-----------|
-| Opus | `claude-opus-4-7` | Anthropic |
+| Opus | latest default (e.g. `claude-opus-4-8`) | Anthropic |
 | Sonnet | `deepseek-v4-pro` | DeepSeek |
 | Haiku | `deepseek-v4-flash` | DeepSeek |
 | Subagent | `deepseek-v4-flash` | DeepSeek |

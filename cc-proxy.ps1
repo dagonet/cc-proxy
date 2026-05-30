@@ -110,7 +110,7 @@ function Show-Help {
     Write-Host "              Requires: DEEPSEEK_API_KEY"
     Write-Host ""
     Write-Host "  mixed       Mix providers within one session."
-    Write-Host "              Opus    -> Anthropic claude-opus-4-7"
+    Write-Host "              Opus    -> Anthropic latest default"
     Write-Host "              Sonnet  -> DeepSeek deepseek-v4-pro"
     Write-Host "              Haiku   -> DeepSeek deepseek-v4-flash"
     Write-Host "              Subagent-> DeepSeek deepseek-v4-flash"
@@ -259,14 +259,16 @@ function Set-Mode {
             if ($usingApiKey) {
                 $env:ANTHROPIC_AUTH_TOKEN       = 'proxy-placeholder'
             }
-            $env:ANTHROPIC_DEFAULT_OPUS_MODEL   = 'claude-opus-4-7'
+            # Opus: leave ANTHROPIC_DEFAULT_OPUS_MODEL unset so Claude Code
+            # uses its built-in latest Opus default (routes to Anthropic via
+            # the 'claude' name match). Cleared at top of Set-Mode already.
             $env:ANTHROPIC_DEFAULT_SONNET_MODEL = 'deepseek-v4-pro'
             $env:ANTHROPIC_DEFAULT_HAIKU_MODEL  = 'deepseek-v4-flash'
             $env:CLAUDE_CODE_SUBAGENT_MODEL     = 'deepseek-v4-flash'
             $env:CLAUDE_CODE_EFFORT_LEVEL       = 'max'
 
             Write-Host "Claude Code configured for MIXED mode, proxy at 127.0.0.1:3456." -ForegroundColor Magenta
-            Write-Host "  Opus    -> Anthropic claude-opus-4-7"
+            Write-Host '  Opus    -> Anthropic latest default'
             Write-Host "  Sonnet  -> DeepSeek deepseek-v4-pro"
             Write-Host "  Haiku   -> DeepSeek deepseek-v4-flash"
             Write-Host "  Subagent -> DeepSeek deepseek-v4-flash"

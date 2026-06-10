@@ -199,7 +199,7 @@ function Start-Proxy {
     $proc = Start-Process -FilePath 'node' -ArgumentList $serverScript `
         -WindowStyle Hidden -PassThru `
         -RedirectStandardOutput $outLog -RedirectStandardError $errLog
-    $proc.Pid | Out-File -FilePath (Join-Path $PSScriptRoot '.proxy-pid') -NoNewline
+    $proc.Id | Out-File -FilePath (Join-Path $PSScriptRoot '.proxy-pid') -NoNewline
 
     $timeout = 15
     while ($timeout -gt 0 -and -not (Test-ProxyRunning)) {

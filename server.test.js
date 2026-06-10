@@ -311,6 +311,15 @@ describe('cc-proxy', () => {
       assert.ok(ids.includes('deepseek-v4-flash'), 'should have injected deepseek-v4-flash');
     });
 
+    it('does not duplicate a model the upstream already lists', async () => {
+      const res = await httpRequest('GET', proxyPort, '/v1/models', null,
+        { 'x-api-key': ANTHROPIC_KEY }
+      );
+      const data = JSON.parse(res.body);
+      const opusCount = data.data.filter((m) => m.id === 'claude-opus-4-7').length;
+      assert.equal(opusCount, 1, 'upstream model should appear exactly once');
+    });
+
     it('returns 404 for non-/v1/ paths', async () => {
       const res = await httpRequest('GET', proxyPort, '/health');
       assert.equal(res.status, 404);

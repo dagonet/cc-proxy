@@ -326,16 +326,19 @@ async function proxyModels(req, res) {
       return;
     }
 
-    // Inject DeepSeek models
-    const deepseekModels = [
+    // Inject DeepSeek models. Dedupe by id so a model the upstream already
+    // lists is never duplicated.
+    const injectedModels = [
       { id: 'deepseek-v4-pro', type: 'model', display_name: 'DeepSeek V4 Pro', created_at: '2026-01-01T00:00:00Z' },
       { id: 'deepseek-v4-flash', type: 'model', display_name: 'DeepSeek V4 Flash', created_at: '2026-01-01T00:00:00Z' },
     ];
 
-    if (Array.isArray(data.data)) {
-      data.data.push(...deepseekModels);
-    } else if (Array.isArray(data)) {
-      data.push(...deepseekModels);
+    const list = Array.isArray(data.data) ? data.data : (Array.isArray(data) ? data : null);
+    if (list) {
+      const existing = new Set(list.map((m) => m && m.id));
+      for (const m of injectedModels) {
+        if (!existing.has(m.id)) list.push(m);
+      }
     }
 
     const modified = JSON.stringify(data);
@@ -344,7 +347,7 @@ async function proxyModels(req, res) {
       'Content-Length': Buffer.byteLength(modified).toString(),
     });
     res.end(modified);
-    console.log(`[models] injected ${deepseekModels.length} DeepSeek models`);
+    console.log(`[models] injected up to ${injectedModels.length} DeepSeek models`);
   } catch (err) {
     if (err.name === 'AbortError') {
       res.writeHead(504, { 'Content-Type': 'application/json' });

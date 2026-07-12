@@ -9,6 +9,13 @@ const MAX_BODY_SIZE = parseInt(process.env.MAX_BODY_SIZE_MB || '10', 10) * 1024 
 const ANTHROPIC_URL = process.env.ANTHROPIC_UPSTREAM_URL || 'https://api.anthropic.com/v1/messages';
 const DEEPSEEK_URL = process.env.DEEPSEEK_UPSTREAM_URL || 'https://api.deepseek.com/anthropic/v1/messages';
 
+// Mixed-mode Sonnet/Haiku substitution targets. The proxy is only in the
+// request path during mixed mode, so any claude-sonnet-*/claude-haiku-*
+// (including [1m] variants that bypass Claude Code's own model override)
+// is rewritten to these DeepSeek models. Overridable via env.
+const SONNET_TARGET = (process.env.PROXY_SONNET_MODEL || 'deepseek-v4-pro').trim();
+const HAIKU_TARGET = (process.env.PROXY_HAIKU_MODEL || 'deepseek-v4-flash').trim();
+
 let reqCounter = 0;
 function ts() { return new Date().toISOString(); }
 function log(route, model, msg) { console.log(`${ts()} #${++reqCounter} [${route}] model=${model} ${msg}`); }
@@ -26,9 +33,22 @@ if (!DEEPSEEK_API_KEY) {
 
 const ANTHROPIC_AUTH_MODE = ANTHROPIC_API_KEY ? 'api-key' : 'passthrough';
 
+function resolveModel(model) {
+  if (!model) return model;
+  // Strip Claude Code's [1m] suffix (DeepSeek's API doesn't understand it),
+  // then map every Sonnet/Haiku variant to its DeepSeek target. Opus and
+  // already-DeepSeek names pass through untouched.
+  const base = model.replace(/\[1m\]$/, '');
+  if (base.startsWith('claude-sonnet')) return SONNET_TARGET;
+  if (base.startsWith('claude-haiku')) return HAIKU_TARGET;
+  return model;
+}
+
 function routeRequest(model) {
-  if (model && model.includes('deepseek')) return 'deepseek';
-  if (model && model.includes('claude')) return 'anthropic';
+  // Strip Claude Code [1m] suffix before routing (safety net)
+  const cleanModel = model?.replace(/\[1m\]$/, '');
+  if (cleanModel && cleanModel.includes('deepseek')) return 'deepseek';
+  if (cleanModel && cleanModel.includes('claude')) return 'anthropic';
   return null;
 }
 
@@ -79,6 +99,12 @@ async function proxyRequest(req, res) {
     return;
   }
 
+  const resolvedModel = resolveModel(parsed.model);
+  if (resolvedModel !== parsed.model) {
+    console.log(`${ts()} [resolve] ${parsed.model} → ${resolvedModel}`);
+    parsed.model = resolvedModel;
+    body = Buffer.from(JSON.stringify(parsed));
+  }
   const model = parsed.model;
   const route = routeRequest(model);
   if (!route) {

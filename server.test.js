@@ -89,8 +89,10 @@ describe('cc-proxy', () => {
   describe('model routing', () => {
     // Replicate routeRequest for unit testability
     function routeRequest(model) {
-      if (model && model.includes('deepseek')) return 'deepseek';
-      if (model && model.includes('claude')) return 'anthropic';
+      // Strip Claude Code [1m] suffix before routing (safety net)
+      const cleanModel = model?.replace(/\[1m\]$/, '');
+      if (cleanModel && cleanModel.includes('deepseek')) return 'deepseek';
+      if (cleanModel && cleanModel.includes('claude')) return 'anthropic';
       return null;
     }
 
@@ -112,6 +114,15 @@ describe('cc-proxy', () => {
     it('claude-haiku-4-5 -> anthropic', () => {
       assert.equal(routeRequest('claude-haiku-4-5'), 'anthropic');
     });
+    it('claude-sonnet-4-6[1m] -> anthropic', () => {
+      assert.equal(routeRequest('claude-sonnet-4-6[1m]'), 'anthropic');
+    });
+    it('claude-sonnet-5[1m] -> anthropic', () => {
+      assert.equal(routeRequest('claude-sonnet-5[1m]'), 'anthropic');
+    });
+    it('deepseek-v4-pro[1m] -> deepseek', () => {
+      assert.equal(routeRequest('deepseek-v4-pro[1m]'), 'deepseek');
+    });
     it('gpt-5 -> null', () => {
       assert.equal(routeRequest('gpt-5'), null);
     });
@@ -123,6 +134,45 @@ describe('cc-proxy', () => {
     });
     it('empty string -> null', () => {
       assert.equal(routeRequest(''), null);
+    });
+  });
+
+  describe('resolveModel', () => {
+    // Replicate resolveModel (unconditional: proxy is only in-path in mixed mode)
+    const SONNET_TARGET = 'deepseek-v4-pro';
+    const HAIKU_TARGET = 'deepseek-v4-flash';
+    function resolveModel(model) {
+      if (!model) return model;
+      const base = model.replace(/\[1m\]$/, '');
+      if (base.startsWith('claude-sonnet')) return SONNET_TARGET;
+      if (base.startsWith('claude-haiku')) return HAIKU_TARGET;
+      return model;
+    }
+
+    it('rewrites claude-sonnet-4-6 (200k) -> deepseek-v4-pro', () => {
+      assert.equal(resolveModel('claude-sonnet-4-6'), 'deepseek-v4-pro');
+    });
+    it('rewrites claude-sonnet-4-6[1m] -> deepseek-v4-pro (suffix stripped)', () => {
+      assert.equal(resolveModel('claude-sonnet-4-6[1m]'), 'deepseek-v4-pro');
+    });
+    it('rewrites claude-sonnet-5[1m] -> deepseek-v4-pro', () => {
+      assert.equal(resolveModel('claude-sonnet-5[1m]'), 'deepseek-v4-pro');
+    });
+    it('rewrites claude-haiku-4-5 -> deepseek-v4-flash', () => {
+      assert.equal(resolveModel('claude-haiku-4-5'), 'deepseek-v4-flash');
+    });
+    it('rewrites claude-haiku-4-5[1m] -> deepseek-v4-flash', () => {
+      assert.equal(resolveModel('claude-haiku-4-5[1m]'), 'deepseek-v4-flash');
+    });
+    it('leaves claude-opus-4-8[1m] unchanged (opus stays on Anthropic)', () => {
+      assert.equal(resolveModel('claude-opus-4-8[1m]'), 'claude-opus-4-8[1m]');
+    });
+    it('leaves deepseek models unchanged', () => {
+      assert.equal(resolveModel('deepseek-v4-pro'), 'deepseek-v4-pro');
+    });
+    it('handles null/undefined', () => {
+      assert.equal(resolveModel(null), null);
+      assert.equal(resolveModel(undefined), undefined);
     });
   });
 

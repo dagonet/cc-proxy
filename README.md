@@ -108,6 +108,8 @@ DeepSeek requests always use `DEEPSEEK_API_KEY`. In passthrough mode, client hea
 | Haiku | `deepseek-v4-flash` | DeepSeek |
 | Subagent | `deepseek-v4-flash` | DeepSeek |
 
+**1M-context Sonnet handling.** Claude Code's `sonnet[1m]` alias bypasses `ANTHROPIC_DEFAULT_SONNET_MODEL` and sends the raw `claude-sonnet-4-6[1m]` name. Since the proxy is only in the request path during mixed mode, it rewrites **every** `claude-sonnet-*` and `claude-haiku-*` name (200k and `[1m]` variants alike) to its DeepSeek target before routing — the `[1m]` suffix is stripped so DeepSeek's API accepts the name. Opus passes through to Anthropic. Targets default to `deepseek-v4-pro` / `deepseek-v4-flash`; override with `PROXY_SONNET_MODEL` / `PROXY_HAIKU_MODEL`.
+
 ## CLI
 
 ```

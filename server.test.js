@@ -146,7 +146,7 @@ describe('cc-proxy', () => {
       const base = model.replace(/\[1m\]$/, '');
       if (base.startsWith('claude-sonnet')) return SONNET_TARGET;
       if (base.startsWith('claude-haiku')) return HAIKU_TARGET;
-      return model;
+      return base;
     }
 
     it('rewrites claude-sonnet-4-6 (200k) -> deepseek-v4-pro', () => {
@@ -164,8 +164,11 @@ describe('cc-proxy', () => {
     it('rewrites claude-haiku-4-5[1m] -> deepseek-v4-flash', () => {
       assert.equal(resolveModel('claude-haiku-4-5[1m]'), 'deepseek-v4-flash');
     });
-    it('leaves claude-opus-4-8[1m] unchanged (opus stays on Anthropic)', () => {
-      assert.equal(resolveModel('claude-opus-4-8[1m]'), 'claude-opus-4-8[1m]');
+    it('keeps opus on Anthropic but strips [1m] (no upstream accepts it)', () => {
+      assert.equal(resolveModel('claude-opus-4-8[1m]'), 'claude-opus-4-8');
+    });
+    it('strips [1m] from a pinned deepseek model', () => {
+      assert.equal(resolveModel('deepseek-v4-pro[1m]'), 'deepseek-v4-pro');
     });
     it('leaves deepseek models unchanged', () => {
       assert.equal(resolveModel('deepseek-v4-pro'), 'deepseek-v4-pro');

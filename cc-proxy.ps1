@@ -236,8 +236,11 @@ function Set-Mode {
             $env:ANTHROPIC_BASE_URL             = 'https://api.deepseek.com/anthropic'
             $env:ANTHROPIC_AUTH_TOKEN           = $apiKey
             $env:ANTHROPIC_MODEL                = 'deepseek-v4-pro'
-            $env:ANTHROPIC_DEFAULT_OPUS_MODEL   = 'deepseek-v4-pro'
-            $env:ANTHROPIC_DEFAULT_SONNET_MODEL = 'deepseek-v4-pro'
+            # [1m] pins the 1M context window Claude Code would otherwise budget
+            # at 200K for an unrecognized model ID. Claude Code strips the suffix
+            # before sending the model ID to DeepSeek.
+            $env:ANTHROPIC_DEFAULT_OPUS_MODEL   = 'deepseek-v4-pro[1m]'
+            $env:ANTHROPIC_DEFAULT_SONNET_MODEL = 'deepseek-v4-pro[1m]'
             $env:ANTHROPIC_DEFAULT_HAIKU_MODEL  = 'deepseek-v4-flash'
             $env:CLAUDE_CODE_SUBAGENT_MODEL     = 'deepseek-v4-flash'
             $env:CLAUDE_CODE_EFFORT_LEVEL       = 'max'
@@ -262,14 +265,17 @@ function Set-Mode {
             # Opus: leave ANTHROPIC_DEFAULT_OPUS_MODEL unset so Claude Code
             # uses its built-in latest Opus default (routes to Anthropic via
             # the 'claude' name match). Cleared at top of Set-Mode already.
-            $env:ANTHROPIC_DEFAULT_SONNET_MODEL = 'deepseek-v4-pro'
+            # [1m] pins the 1M context window Claude Code would otherwise budget
+            # at 200K for an unrecognized model ID, which made auto-compact fire
+            # early. Claude Code strips the suffix before sending it upstream.
+            $env:ANTHROPIC_DEFAULT_SONNET_MODEL = 'deepseek-v4-pro[1m]'
             $env:ANTHROPIC_DEFAULT_HAIKU_MODEL  = 'deepseek-v4-flash'
             $env:CLAUDE_CODE_SUBAGENT_MODEL     = 'deepseek-v4-flash'
             $env:CLAUDE_CODE_EFFORT_LEVEL       = 'max'
 
             Write-Host "Claude Code configured for MIXED mode, proxy at 127.0.0.1:3456." -ForegroundColor Magenta
             Write-Host '  Opus    -> Anthropic latest default'
-            Write-Host "  Sonnet  -> DeepSeek deepseek-v4-pro"
+            Write-Host "  Sonnet  -> DeepSeek deepseek-v4-pro, 1M context"
             Write-Host "  Haiku   -> DeepSeek deepseek-v4-flash"
             Write-Host "  Subagent -> DeepSeek deepseek-v4-flash"
             if ($usingApiKey) {

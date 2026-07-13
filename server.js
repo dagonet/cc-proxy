@@ -35,13 +35,12 @@ const ANTHROPIC_AUTH_MODE = ANTHROPIC_API_KEY ? 'api-key' : 'passthrough';
 
 function resolveModel(model) {
   if (!model) return model;
-  // Strip Claude Code's [1m] suffix (DeepSeek's API doesn't understand it),
-  // then map every Sonnet/Haiku variant to its DeepSeek target. Opus and
-  // already-DeepSeek names pass through untouched.
+  // Strip Claude Code's [1m] suffix — no upstream accepts it — then map every
+  // Sonnet/Haiku variant to its DeepSeek target. Opus keeps its own name.
   const base = model.replace(/\[1m\]$/, '');
   if (base.startsWith('claude-sonnet')) return SONNET_TARGET;
   if (base.startsWith('claude-haiku')) return HAIKU_TARGET;
-  return model;
+  return base;
 }
 
 function routeRequest(model) {

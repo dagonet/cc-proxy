@@ -49,7 +49,9 @@ The proxy itself (`server.js`) is plain Node.js — runs anywhere. The `cc-proxy
 export ANTHROPIC_BASE_URL=http://127.0.0.1:3456
 # Opus: leave ANTHROPIC_DEFAULT_OPUS_MODEL unset so Claude Code uses its
 # latest built-in Opus default (routed to Anthropic via the "claude" match).
-export ANTHROPIC_DEFAULT_SONNET_MODEL=deepseek-v4-pro
+# [1m] declares the real 1M window so auto-compact doesn't fire at 200K.
+# Claude Code strips the suffix before sending the model ID upstream.
+export ANTHROPIC_DEFAULT_SONNET_MODEL='deepseek-v4-pro[1m]'
 export ANTHROPIC_DEFAULT_HAIKU_MODEL=deepseek-v4-flash
 export CLAUDE_CODE_SUBAGENT_MODEL=deepseek-v4-flash
 export CLAUDE_CODE_EFFORT_LEVEL=max
@@ -109,6 +111,8 @@ DeepSeek requests always use `DEEPSEEK_API_KEY`. In passthrough mode, client hea
 | Subagent | `deepseek-v4-flash` | DeepSeek |
 
 **1M-context Sonnet handling.** Claude Code's `sonnet[1m]` alias bypasses `ANTHROPIC_DEFAULT_SONNET_MODEL` and sends the raw `claude-sonnet-4-6[1m]` name. Since the proxy is only in the request path during mixed mode, it rewrites **every** `claude-sonnet-*` and `claude-haiku-*` name (200k and `[1m]` variants alike) to its DeepSeek target before routing — the `[1m]` suffix is stripped so DeepSeek's API accepts the name. Opus passes through to Anthropic. Targets default to `deepseek-v4-pro` / `deepseek-v4-flash`; override with `PROXY_SONNET_MODEL` / `PROXY_HAIKU_MODEL`.
+
+**Getting the full 1M window.** The Sonnet alias is pinned as `deepseek-v4-pro[1m]`. Behind a gateway, Claude Code can't verify an unrecognized model's capabilities and would budget it at 200K, making auto-compact fire long before the model is actually full. The `[1m]` suffix declares the real window (DeepSeek V4 Pro is 1M), and Claude Code strips the suffix before sending the model ID upstream. `CLAUDE_CODE_AUTO_COMPACT_WINDOW` can't substitute for this — it is capped at the window Claude Code already believes the model has.
 
 ## CLI
 

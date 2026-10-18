@@ -59,6 +59,19 @@ function waitForPort(port, timeoutMs = 5000) {
   });
 }
 
+// A real \0 escape: not itself escaped (even run of backslashes), not octal/backref.
+const NUL_ESCAPE = /(?<!\\)(?:\\\\)*\\0(?!\d)/;
+
+// Every `pattern` value and `patternProperties` key in a JSON schema.
+function schemaPatterns(node) {
+  if (Array.isArray(node)) return node.flatMap(schemaPatterns);
+  if (!node || typeof node !== 'object') return [];
+  const own = [];
+  if (typeof node.pattern === 'string') own.push(node.pattern);
+  if (node.patternProperties && typeof node.patternProperties === 'object') own.push(...Object.keys(node.patternProperties));
+  return own.concat(Object.values(node).flatMap(schemaPatterns));
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -246,6 +259,14 @@ describe('cc-proxy', () => {
             // Mirror DeepSeek's strict checks on mid-conversation tool changes
             // (measured against the live API, 2026-10-18).
             const toolNames = new Set((lastDeepseekBody.tools || []).map((t) => t.name));
+            // DeepSeek's schema validator rejects the regex escape \0 (it accepts \x00).
+            const badPattern = (lastDeepseekBody.tools || []).flatMap((t) => schemaPatterns(t.input_schema))
+              .find((p) => NUL_ESCAPE.test(p));
+            if (badPattern !== undefined) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: { message: `Invalid schema: ${JSON.stringify(badPattern)} is not a "regex"` } }));
+              return;
+            }
             for (const msg of lastDeepseekBody.messages || []) {
               if (!Array.isArray(msg.content)) continue;
               for (const b of msg.content) {
@@ -446,6 +467,64 @@ describe('cc-proxy', () => {
         const res = await post(body);
         assert.equal(res.status, 200, res.body);
         assert.deepEqual(lastAnthropicBody, JSON.parse(body));
+      });
+    });
+
+    // Claude Code's Artifact tool uses pattern "^[^\0]*$"; DeepSeek rejects the
+    // \0 escape with 400 'is not a "regex"' and accepts the equivalent \x00.
+    describe('tool schema patterns', () => {
+      const artifact = (pattern) => ({
+        name: 'Artifact',
+        description: 'Publish.',
+        input_schema: {
+          type: 'object',
+          properties: { file_paths: { type: 'array', items: { type: 'string', minLength: 1, pattern } } },
+        },
+      });
+      const post = (model, tools, messages = [{ role: 'user', content: 'hi' }]) =>
+        httpRequest('POST', proxyPort, '/v1/messages', JSON.stringify({ model, max_tokens: 100, tools, messages }),
+          { 'x-api-key': ANTHROPIC_KEY });
+      const sentPattern = () => lastDeepseekBody.tools[0].input_schema.properties.file_paths.items.pattern;
+
+      it('rewrites \\0 to \\x00 for DeepSeek', async () => {
+        const res = await post('deepseek-v4-pro', [artifact('^[^\\0]*$')]);
+        assert.equal(res.status, 200, res.body);
+        assert.equal(sentPattern(), '^[^\\x00]*$');
+      });
+
+      it('rewrites patternProperties keys', async () => {
+        const tool = { name: 'm', description: 'x', input_schema: { type: 'object', patternProperties: { '^[^\\0]+$': { type: 'string' } } } };
+        const res = await post('deepseek-v4-pro', [tool]);
+        assert.equal(res.status, 200, res.body);
+        assert.deepEqual(Object.keys(lastDeepseekBody.tools[0].input_schema.patternProperties), ['^[^\\x00]+$']);
+      });
+
+      it('leaves an escaped backslash followed by 0 alone', async () => {
+        const res = await post('deepseek-v4-pro', [artifact('^a\\\\0$')]);
+        assert.equal(res.status, 200, res.body);
+        assert.equal(sentPattern(), '^a\\\\0$');
+      });
+
+      it('leaves \\0 followed by a digit alone', async () => {
+        const res = await post('deepseek-v4-pro', [artifact('^\\01$')]);
+        assert.equal(res.status, 200, res.body);
+        assert.equal(sentPattern(), '^\\01$');
+      });
+
+      it('fixes definitions moved in from a tool_addition block', async () => {
+        const res = await post('claude-sonnet-4-6', [{ name: 'noop', description: 'x', input_schema: { type: 'object', properties: {} } }], [
+          { role: 'user', content: 'hi' },
+          { role: 'system', content: [{ type: 'text', text: 'Tools changed.' }, { type: 'tool_addition', tool: { type: 'tool_definition', definition: artifact('^[^\\0]*$') } }] },
+          { role: 'user', content: 'go' },
+        ]);
+        assert.equal(res.status, 200, res.body);
+        assert.equal(lastDeepseekBody.tools[1].input_schema.properties.file_paths.items.pattern, '^[^\\x00]*$');
+      });
+
+      it('leaves Anthropic-bound schemas unchanged', async () => {
+        const res = await post('claude-opus-4-7', [artifact('^[^\\0]*$')]);
+        assert.equal(res.status, 200, res.body);
+        assert.equal(lastAnthropicBody.tools[0].input_schema.properties.file_paths.items.pattern, '^[^\\0]*$');
       });
     });
 

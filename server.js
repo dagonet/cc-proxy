@@ -86,6 +86,33 @@ function normalizeToolAdditions(parsed) {
   return changed;
 }
 
+// DeepSeek's schema validator rejects the regex escape \0 ('"^[^\\0]*$" is not
+// a "regex"', 400) — Claude Code's Artifact tool uses it — but accepts the
+// equivalent \x00. Rewrite real \0 escapes (not \\0, not octal \01) in every
+// `pattern` and `patternProperties` key. Returns true if the body changed.
+const NUL_ESCAPE = /(?<!\\)((?:\\\\)*)\\0(?!\d)/g;
+
+function fixSchemaPatterns(parsed) {
+  let changed = false;
+  const fix = (p) => {
+    const out = p.replace(NUL_ESCAPE, '$1\\x00');
+    if (out !== p) changed = true;
+    return out;
+  };
+  const walk = (node) => {
+    if (Array.isArray(node)) { node.forEach(walk); return; }
+    if (!node || typeof node !== 'object') return;
+    if (typeof node.pattern === 'string') node.pattern = fix(node.pattern);
+    if (node.patternProperties && typeof node.patternProperties === 'object') {
+      node.patternProperties = Object.fromEntries(
+        Object.entries(node.patternProperties).map(([k, v]) => [fix(k), v]));
+    }
+    Object.values(node).forEach(walk);
+  };
+  if (Array.isArray(parsed.tools)) parsed.tools.forEach((t) => walk(t?.input_schema));
+  return changed;
+}
+
 function getUpstreamConfig(route, query) {
   if (route === 'deepseek') {
     // DeepSeek ignores beta features — strip query string to avoid confusing their parser
@@ -157,6 +184,11 @@ async function proxyRequest(req, res) {
 
   if (route === 'deepseek' && normalizeToolAdditions(parsed)) {
     console.log(`${ts()} [normalize] rewrote tool_addition blocks for DeepSeek`);
+    body = Buffer.from(JSON.stringify(parsed));
+  }
+  // After normalizeToolAdditions, so definitions it moved into `tools` are covered.
+  if (route === 'deepseek' && fixSchemaPatterns(parsed)) {
+    console.log(`${ts()} [normalize] rewrote \\0 in tool schema patterns for DeepSeek`);
     body = Buffer.from(JSON.stringify(parsed));
   }
 

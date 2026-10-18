@@ -9,8 +9,8 @@ const MAX_BODY_SIZE = parseInt(process.env.MAX_BODY_SIZE_MB || '10', 10) * 1024 
 const ANTHROPIC_URL = process.env.ANTHROPIC_UPSTREAM_URL || 'https://api.anthropic.com/v1/messages';
 const DEEPSEEK_URL = process.env.DEEPSEEK_UPSTREAM_URL || 'https://api.deepseek.com/anthropic/v1/messages';
 
-// Mixed-mode Sonnet/Haiku substitution targets. The proxy is only in the
-// request path during mixed mode, so any claude-sonnet-*/claude-haiku-*
+// Sonnet/Haiku substitution targets. The proxy is only in the
+// request path in mixed and DeepSeek-only mode, so any claude-sonnet-*/claude-haiku-*
 // (including [1m] variants that bypass Claude Code's own model override)
 // is rewritten to these DeepSeek models. Overridable via env.
 const SONNET_TARGET = (process.env.PROXY_SONNET_MODEL || 'deepseek-v4-pro').trim();
@@ -32,6 +32,20 @@ if (!DEEPSEEK_API_KEY) {
 }
 
 const ANTHROPIC_AUTH_MODE = ANTHROPIC_API_KEY ? 'api-key' : 'passthrough';
+
+// DeepSeek-only mode points Claude Code at the proxy with this marker as its
+// token (not a secret). Such a client never reaches Anthropic: every model goes
+// to DeepSeek, /v1/models is answered here, other /v1 calls get a 404.
+const DEEPSEEK_ONLY_TOKEN = 'cc-proxy-deepseek-only';
+const DEEPSEEK_MODELS = [
+  { id: 'deepseek-v4-pro', type: 'model', display_name: 'DeepSeek V4 Pro', created_at: '2026-01-01T00:00:00Z' },
+  { id: 'deepseek-v4-flash', type: 'model', display_name: 'DeepSeek V4 Flash', created_at: '2026-01-01T00:00:00Z' },
+];
+
+function isDeepSeekOnly(req) {
+  return req.headers.authorization === `Bearer ${DEEPSEEK_ONLY_TOKEN}`
+    || req.headers['x-api-key'] === DEEPSEEK_ONLY_TOKEN;
+}
 
 function resolveModel(model) {
   if (!model) return model;
@@ -113,12 +127,14 @@ function fixSchemaPatterns(parsed) {
   return changed;
 }
 
-function getUpstreamConfig(route, query) {
+function getUpstreamConfig(route, query, countTokens) {
+  // /v1/messages/count_tokens goes to each upstream's own counter.
+  const suffix = countTokens ? '/count_tokens' : '';
   if (route === 'deepseek') {
     // DeepSeek ignores beta features — strip query string to avoid confusing their parser
-    return { url: DEEPSEEK_URL, key: DEEPSEEK_API_KEY };
+    return { url: DEEPSEEK_URL + suffix, key: DEEPSEEK_API_KEY };
   }
-  return { url: ANTHROPIC_URL + (query || ''), key: ANTHROPIC_API_KEY };
+  return { url: ANTHROPIC_URL + suffix + (query || ''), key: ANTHROPIC_API_KEY };
 }
 
 function collectBody(req, maxSize) {
@@ -160,7 +176,12 @@ async function proxyRequest(req, res) {
     return;
   }
 
-  const resolvedModel = resolveModel(parsed.model);
+  const deepseekOnly = isDeepSeekOnly(req);
+  const countTokens = req.url.split('?')[0] === '/v1/messages/count_tokens';
+
+  let resolvedModel = resolveModel(parsed.model);
+  // A DeepSeek-only client's Opus (or any other Claude) request stays on DeepSeek.
+  if (deepseekOnly && routeRequest(resolvedModel) === 'anthropic') resolvedModel = SONNET_TARGET;
   if (resolvedModel !== parsed.model) {
     console.log(`${ts()} [resolve] ${parsed.model} → ${resolvedModel}`);
     parsed.model = resolvedModel;
@@ -177,7 +198,8 @@ async function proxyRequest(req, res) {
   // Anthropic requires max_tokens; DeepSeek's API does not.
   // When Claude Code targets a DeepSeek model it may omit max_tokens.
   // If the proxy routes that request to Anthropic instead, inject a default.
-  if (route === 'anthropic' && typeof parsed.max_tokens !== 'number') {
+  // Token counts take no max_tokens.
+  if (route === 'anthropic' && !countTokens && typeof parsed.max_tokens !== 'number') {
     parsed.max_tokens = 4096;
     body = Buffer.from(JSON.stringify(parsed));
   }
@@ -193,7 +215,7 @@ async function proxyRequest(req, res) {
   }
 
   const query = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
-  const upstream = getUpstreamConfig(route, query);
+  const upstream = getUpstreamConfig(route, query, countTokens);
 
   const headers = {};
   if (route === 'deepseek') {
@@ -425,10 +447,7 @@ async function proxyModels(req, res) {
 
     // Inject DeepSeek models. Dedupe by id so a model the upstream already
     // lists is never duplicated.
-    const injectedModels = [
-      { id: 'deepseek-v4-pro', type: 'model', display_name: 'DeepSeek V4 Pro', created_at: '2026-01-01T00:00:00Z' },
-      { id: 'deepseek-v4-flash', type: 'model', display_name: 'DeepSeek V4 Flash', created_at: '2026-01-01T00:00:00Z' },
-    ];
+    const injectedModels = DEEPSEEK_MODELS;
 
     const list = Array.isArray(data.data) ? data.data : (Array.isArray(data) ? data : null);
     if (list) {
@@ -471,6 +490,17 @@ const server = createServer((req, res) => {
 
   if (req.method === 'POST' && req.url.startsWith('/v1/messages')) {
     proxyRequest(req, res);
+  } else if (isDeepSeekOnly(req)) {
+    // Never reaches Anthropic. DeepSeek has no model list, so answer it here.
+    req.resume();
+    if (req.url.startsWith('/v1/models')) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ data: DEEPSEEK_MODELS, has_more: false }));
+    } else {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'not available in DeepSeek-only mode' }));
+    }
+    console.log(`${ts()} [deepseek-only] ${req.method} ${req.url.split('?')[0]} answered locally`);
   } else if (req.url.startsWith('/v1/models')) {
     proxyModels(req, res);
   } else {

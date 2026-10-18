@@ -190,6 +190,16 @@ For DeepSeek-bound requests the proxy moves each definition into `tools`, rewrit
 
 `-Mode deepseek` has no proxy in the path, so it sets `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` instead: Claude Code then sends no mid-conversation tool-change blocks at all, also when resuming a session that recorded them. Mixed mode does not set it, so Opus keeps the betas.
 
+### Tool schema patterns
+
+DeepSeek validates the regex in every tool's JSON-schema `pattern`, and rejects the `\0` escape that Claude Code's Artifact tool uses (`"^[^\\0]*$"`):
+
+```
+400 Invalid schema for function 'Artifact': "^[^\\0]*$" is not a "regex"
+```
+
+For DeepSeek-bound requests the proxy rewrites real `\0` escapes to the equivalent `\x00`, in `pattern` values and `patternProperties` keys. An escaped backslash before `0` (`\\0`) and `\0` followed by a digit are left as they are. Every other pattern Claude Code 2.1.302 sends was accepted by DeepSeek as is. **`-Mode deepseek` is not covered**: it has no proxy in the path, so this fix does not reach it.
+
 ### max_tokens injection
 
 Anthropic's API requires `max_tokens`; DeepSeek's does not. When Claude Code targets a DeepSeek model it may omit `max_tokens`. The proxy auto-injects `max_tokens: 4096` when routing to Anthropic if the field is missing.

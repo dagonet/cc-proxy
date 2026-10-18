@@ -51,6 +51,41 @@ function routeRequest(model) {
   return null;
 }
 
+// Claude Code's inline-tools beta announces tools that connect mid-session as
+// tool_addition blocks carrying the full tool_definition. DeepSeek only accepts
+// tool_addition -> tool_reference, and only to a tool listed in `tools`
+// (422 / 400 otherwise). Move each definition into `tools`, point the block at
+// it by name, and drop references DeepSeek cannot resolve. Returns true if the
+// body changed.
+function normalizeToolAdditions(parsed) {
+  if (!Array.isArray(parsed.messages)) return false;
+  const tools = Array.isArray(parsed.tools) ? parsed.tools : [];
+  const names = new Set(tools.map((t) => t?.name));
+  let changed = false;
+
+  for (const msg of parsed.messages) {
+    if (!Array.isArray(msg?.content)) continue;
+    for (const block of msg.content) {
+      if (block?.type !== 'tool_addition' || block.tool?.type !== 'tool_definition') continue;
+      const def = block.tool.definition;
+      if (!names.has(def.name)) { tools.push(def); names.add(def.name); }
+      block.tool = { type: 'tool_reference', name: def.name };
+      changed = true;
+    }
+  }
+  for (const msg of parsed.messages) {
+    if (!Array.isArray(msg?.content)) continue;
+    const kept = msg.content.filter((b) =>
+      !(b?.type === 'tool_addition' && b.tool?.type === 'tool_reference' && !names.has(b.tool.name)));
+    if (kept.length !== msg.content.length) { msg.content = kept; changed = true; }
+  }
+  if (changed) {
+    parsed.messages = parsed.messages.filter((m) => !Array.isArray(m?.content) || m.content.length > 0);
+    if (tools.length) parsed.tools = tools;
+  }
+  return changed;
+}
+
 function getUpstreamConfig(route, query) {
   if (route === 'deepseek') {
     // DeepSeek ignores beta features — strip query string to avoid confusing their parser
@@ -117,6 +152,11 @@ async function proxyRequest(req, res) {
   // If the proxy routes that request to Anthropic instead, inject a default.
   if (route === 'anthropic' && typeof parsed.max_tokens !== 'number') {
     parsed.max_tokens = 4096;
+    body = Buffer.from(JSON.stringify(parsed));
+  }
+
+  if (route === 'deepseek' && normalizeToolAdditions(parsed)) {
+    console.log(`${ts()} [normalize] rewrote tool_addition blocks for DeepSeek`);
     body = Buffer.from(JSON.stringify(parsed));
   }
 

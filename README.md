@@ -160,6 +160,18 @@ Get-Content .logs/proxy-stdout.log -Wait
 
 Errors include the response body (truncated to 500 chars). Timeouts and connection failures are logged separately.
 
+### Mid-conversation tool additions
+
+When a tool connects partway through a session (an MCP server, the notifications tool), Claude Code's `inline-tools` beta announces it with a `tool_addition` block carrying the full `tool_definition`. DeepSeek's Anthropic endpoint only accepts `tool_addition` → `tool_reference` to a tool listed in `tools`, and rejects the whole request otherwise:
+
+```
+422 ... messages[3].content: unknown variant `tool_definition`, expected `tool_reference`
+```
+
+For DeepSeek-bound requests the proxy moves each definition into `tools`, rewrites the block to a `tool_reference`, and drops references to tools DeepSeek was not given (the log shows `[normalize]`). Anthropic-bound bodies are forwarded unchanged.
+
+`-Mode deepseek` has no proxy in the path, so it sets `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` instead: Claude Code then sends no mid-conversation tool-change blocks at all, also when resuming a session that recorded them. Mixed mode does not set it, so Opus keeps the betas.
+
 ### max_tokens injection
 
 Anthropic's API requires `max_tokens`; DeepSeek's does not. When Claude Code targets a DeepSeek model it may omit `max_tokens`. The proxy auto-injects `max_tokens: 4096` when routing to Anthropic if the field is missing.
@@ -190,10 +202,10 @@ Pull requests welcome.
 ## Tests
 
 ```bash
-node --test server.test.js
+npm test    # from the repo folder; elsewhere use: npm --prefix <repo> test
 ```
 
-23 tests covering model routing, auth header correctness, model injection, passthrough mode, and error handling. Mock upstreams simulate Anthropic and DeepSeek.
+Tests cover model routing, auth header correctness, model injection, passthrough mode, DeepSeek tool-addition rewriting, and error handling. Mock upstreams simulate Anthropic and DeepSeek. Run them from the repo folder: the proxy is spawned as `node server.js` relative to the working directory.
 
 ## License
 

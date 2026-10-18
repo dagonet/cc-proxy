@@ -243,7 +243,7 @@ function Set-Mode {
             # A marker, not a key: the proxy holds the DeepSeek key, sends every
             # model to DeepSeek, and never calls Anthropic for this shell.
             $env:ANTHROPIC_AUTH_TOKEN           = 'cc-proxy-deepseek-only'
-            $env:ANTHROPIC_MODEL                = 'deepseek-v4-pro'
+            $env:ANTHROPIC_MODEL                = 'deepseek-v4-pro[1m]'
             # [1m] pins the 1M context window Claude Code would otherwise budget
             # at 200K for an unrecognized model ID. Claude Code strips the suffix
             # before sending the model ID to DeepSeek.

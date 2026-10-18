@@ -2,7 +2,7 @@
 #
 # Source it, so the model settings land in the shell that then runs `claude`:
 #   . ./cc-proxy.sh start mixed     # start the proxy + mixed routing
-#   . ./cc-proxy.sh deepseek        # all models via DeepSeek (no proxy)
+#   . ./cc-proxy.sh deepseek        # all models via DeepSeek (starts the proxy)
 #   . ./cc-proxy.sh anthropic       # back to Claude Code defaults
 #   . ./cc-proxy.sh stop            # stop the proxy (all shells) + reset
 #   . ./cc-proxy.sh status
@@ -28,6 +28,8 @@ _ccp_main() {
         sed -n '3,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
         return 0
     fi
+    # DeepSeek-only mode goes through the proxy, so make sure it runs.
+    [ "$mode" = deepseek ] && [ -z "$action" ] && action=start
 
     _ccp_running() { (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; }
     _ccp_key() { [ -r "$keyfile" ] && (set -a; . "$keyfile"; printenv "$1"); }
@@ -93,11 +95,11 @@ _ccp_main() {
             echo "Claude Code defaults (Anthropic subscription), no proxy needed."
             ;;
         deepseek)
-            local key; key="$(_ccp_key DEEPSEEK_API_KEY)"
-            if [ -z "$key" ]; then echo "cc-proxy: DEEPSEEK_API_KEY missing in $keyfile" >&2; return 1; fi
             _ccp_clear
-            export ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic
-            export ANTHROPIC_AUTH_TOKEN="$key"
+            export ANTHROPIC_BASE_URL="http://127.0.0.1:$port"
+            # A marker, not a key: the proxy holds the DeepSeek key, sends every
+            # model to DeepSeek, and never calls Anthropic for this shell.
+            export ANTHROPIC_AUTH_TOKEN=cc-proxy-deepseek-only
             export ANTHROPIC_MODEL=deepseek-v4-pro
             # [1m] declares the real 1M window; Claude Code strips it before sending.
             export ANTHROPIC_DEFAULT_OPUS_MODEL='deepseek-v4-pro[1m]'
@@ -105,9 +107,7 @@ _ccp_main() {
             export ANTHROPIC_DEFAULT_HAIKU_MODEL=deepseek-v4-flash
             export CLAUDE_CODE_SUBAGENT_MODEL=deepseek-v4-flash
             export CLAUDE_CODE_EFFORT_LEVEL=max
-            # No proxy in the path: stop the tool_addition blocks DeepSeek rejects (422).
-            export CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1
-            echo "DeepSeek for all models (direct, no proxy)."
+            echo "DeepSeek for all models (via proxy 127.0.0.1:$port)."
             ;;
         mixed)
             if [ -z "$(_ccp_key DEEPSEEK_API_KEY)" ]; then

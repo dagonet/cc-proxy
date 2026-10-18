@@ -9,7 +9,7 @@
 
     Modes (-Mode):
       anthropic -- Clear overrides, use built-in Claude Code defaults.
-      deepseek  -- Route ALL models to DeepSeek (Anthropic-compatible endpoint).
+      deepseek  -- Route ALL models to DeepSeek through the proxy; starts it if needed.
       mixed     -- Route Opus to Anthropic, Sonnet/Haiku/subagents to DeepSeek.
                   Requires the proxy to be running.
 
@@ -108,6 +108,7 @@ function Show-Help {
     Write-Host ""
     Write-Host "  deepseek    Route ALL models to DeepSeek."
     Write-Host "              Opus, Sonnet, Haiku, subagents -> deepseek-v4-pro / v4-flash"
+    Write-Host "              Starts the proxy if it is not running."
     Write-Host "              Requires: DEEPSEEK_API_KEY"
     Write-Host ""
     Write-Host "  mixed       Mix providers within one session."
@@ -120,7 +121,7 @@ function Show-Help {
     Write-Host ""
     Write-Host "Examples:" -ForegroundColor White
     Write-Host "  . .\cc-proxy.ps1 start -Mode mixed    # Start proxy + mixed routing"
-    Write-Host "  . .\cc-proxy.ps1 -Mode deepseek       # DeepSeek-only, no proxy"
+    Write-Host "  . .\cc-proxy.ps1 -Mode deepseek       # DeepSeek-only, starts the proxy"
     Write-Host "  . .\cc-proxy.ps1 -Mode anthropic      # Reset to defaults"
     Write-Host "  . .\cc-proxy.ps1 stop                 # Stop proxy + reset"
     Write-Host "  . .\cc-proxy.ps1 stop -Force          # Stop without confirmation"
@@ -234,8 +235,14 @@ function Set-Mode {
                 return
             }
 
-            $env:ANTHROPIC_BASE_URL             = 'https://api.deepseek.com/anthropic'
-            $env:ANTHROPIC_AUTH_TOKEN           = $apiKey
+            # DeepSeek-only mode goes through the proxy, which rewrites the
+            # request shapes DeepSeek rejects. Make sure it runs.
+            if (-not (Test-ProxyRunning)) { Start-Proxy }
+
+            $env:ANTHROPIC_BASE_URL             = "http://127.0.0.1:$proxyPort"
+            # A marker, not a key: the proxy holds the DeepSeek key, sends every
+            # model to DeepSeek, and never calls Anthropic for this shell.
+            $env:ANTHROPIC_AUTH_TOKEN           = 'cc-proxy-deepseek-only'
             $env:ANTHROPIC_MODEL                = 'deepseek-v4-pro'
             # [1m] pins the 1M context window Claude Code would otherwise budget
             # at 200K for an unrecognized model ID. Claude Code strips the suffix
@@ -245,13 +252,8 @@ function Set-Mode {
             $env:ANTHROPIC_DEFAULT_HAIKU_MODEL  = 'deepseek-v4-flash'
             $env:CLAUDE_CODE_SUBAGENT_MODEL     = 'deepseek-v4-flash'
             $env:CLAUDE_CODE_EFFORT_LEVEL       = 'max'
-            # No proxy in the path here, so stop Claude Code from sending the
-            # inline-tools / mid-conversation tool-change blocks DeepSeek
-            # rejects with 422 'unknown variant tool_definition'. Mixed mode
-            # keeps the betas for Opus; the proxy rewrites DeepSeek-bound bodies.
-            $env:CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = '1'
 
-            Write-Host "Claude Code configured for DeepSeek, all models." -ForegroundColor Green
+            Write-Host "Claude Code configured for DeepSeek, all models, via proxy at 127.0.0.1:$proxyPort." -ForegroundColor Green
         }
 
         'mixed' {

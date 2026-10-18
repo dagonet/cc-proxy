@@ -83,7 +83,8 @@ describe('cc-proxy', () => {
   let anthroMock, deepseekMock;
   let proxyProc;
   let proxyPort;
-  let lastAnthropicBody, lastDeepseekBody;
+  let lastAnthropicBody, lastDeepseekBody, lastDeepseekUrl, lastDeepseekAuth;
+  const anthropicCalls = [];
 
   function killProxy() {
     if (proxyProc && !proxyProc.killed) {
@@ -204,6 +205,7 @@ describe('cc-proxy', () => {
         let body = '';
         req.on('data', (c) => body += c);
         req.on('end', () => {
+          anthropicCalls.push(req.url);
           // /v1/models - model listing
           if (req.url.startsWith('/v1/models')) {
             if (auth !== ANTHROPIC_KEY) {
@@ -282,6 +284,13 @@ describe('cc-proxy', () => {
                   return;
                 }
               }
+            }
+            lastDeepseekUrl = req.url;
+            lastDeepseekAuth = { 'x-api-key': req.headers['x-api-key'], authorization: req.headers.authorization };
+            if (req.url.startsWith('/anthropic/v1/messages/count_tokens')) {
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ input_tokens: 42 }));
+              return;
             }
             const m = lastDeepseekBody.model || 'unknown';
             res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -525,6 +534,79 @@ describe('cc-proxy', () => {
         const res = await post('claude-opus-4-7', [artifact('^[^\\0]*$')]);
         assert.equal(res.status, 200, res.body);
         assert.equal(lastAnthropicBody.tools[0].input_schema.properties.file_paths.items.pattern, '^[^\\0]*$');
+      });
+    });
+
+    // DeepSeek-only mode points Claude Code at the proxy with this marker as
+    // its token: everything goes to DeepSeek, nothing to Anthropic.
+    describe('DeepSeek-only clients', () => {
+      const DS_ONLY = { authorization: 'Bearer cc-proxy-deepseek-only' };
+      const msg = (model) => JSON.stringify({ model, max_tokens: 100, messages: [{ role: 'user', content: 'hi' }] });
+
+      it('sends an Opus request to DeepSeek as deepseek-v4-pro', async () => {
+        const before = anthropicCalls.length;
+        const res = await httpRequest('POST', proxyPort, '/v1/messages?beta=true', msg('claude-opus-4-7'), DS_ONLY);
+        assert.equal(res.status, 200, res.body);
+        assert.equal(JSON.parse(res.body).content[0].text, 'deepseek');
+        assert.equal(lastDeepseekBody.model, 'deepseek-v4-pro');
+        assert.equal(anthropicCalls.length, before, 'Anthropic must not be called');
+      });
+
+      it('never forwards the marker token to DeepSeek', async () => {
+        await httpRequest('POST', proxyPort, '/v1/messages', msg('deepseek-v4-pro'), DS_ONLY);
+        assert.deepEqual(lastDeepseekAuth, { 'x-api-key': DEEPSEEK_KEY, authorization: undefined });
+      });
+
+      it('answers /v1/models itself with the DeepSeek models', async () => {
+        const before = anthropicCalls.length;
+        const res = await httpRequest('GET', proxyPort, '/v1/models', null, DS_ONLY);
+        assert.equal(res.status, 200, res.body);
+        assert.deepEqual(JSON.parse(res.body).data.map((m) => m.id), ['deepseek-v4-pro', 'deepseek-v4-flash']);
+        assert.equal(anthropicCalls.length, before, 'Anthropic must not be called');
+      });
+
+      it('does not pass other /v1 requests on to Anthropic', async () => {
+        const before = anthropicCalls.length;
+        const res = await httpRequest('GET', proxyPort, '/v1/organizations/me', null, DS_ONLY);
+        assert.equal(res.status, 404, res.body);
+        assert.equal(anthropicCalls.length, before, 'Anthropic must not be called');
+      });
+
+      it('counts tokens with DeepSeek, Opus included', async () => {
+        const before = anthropicCalls.length;
+        const res = await httpRequest('POST', proxyPort, '/v1/messages/count_tokens?beta=true',
+          JSON.stringify({ model: 'claude-opus-4-7', messages: [{ role: 'user', content: 'hi' }] }), DS_ONLY);
+        assert.equal(res.status, 200, res.body);
+        assert.equal(JSON.parse(res.body).input_tokens, 42);
+        assert.ok(lastDeepseekUrl.startsWith('/anthropic/v1/messages/count_tokens'), lastDeepseekUrl);
+        assert.equal(lastDeepseekBody.model, 'deepseek-v4-pro');
+        assert.equal(anthropicCalls.length, before, 'Anthropic must not be called');
+      });
+    });
+
+    describe('token counting', () => {
+      const count = (body) => httpRequest('POST', proxyPort, '/v1/messages/count_tokens?beta=true', JSON.stringify(body),
+        { 'x-api-key': ANTHROPIC_KEY });
+
+      it('sends a DeepSeek-model count to DeepSeek\'s counter, not its chat endpoint', async () => {
+        const res = await count({ model: 'claude-sonnet-4-6', messages: [{ role: 'user', content: 'hi' }] });
+        assert.equal(res.status, 200, res.body);
+        assert.equal(JSON.parse(res.body).input_tokens, 42);
+        assert.ok(lastDeepseekUrl.startsWith('/anthropic/v1/messages/count_tokens'), lastDeepseekUrl);
+      });
+
+      it('applies the DeepSeek schema fixes to counts', async () => {
+        const tool = { name: 'Artifact', description: 'x', input_schema: { type: 'object', properties: { p: { type: 'string', pattern: '^[^\\0]*$' } } } };
+        const res = await count({ model: 'deepseek-v4-pro', tools: [tool], messages: [{ role: 'user', content: 'hi' }] });
+        assert.equal(res.status, 200, res.body);
+        assert.equal(lastDeepseekBody.tools[0].input_schema.properties.p.pattern, '^[^\\x00]*$');
+      });
+
+      it('keeps an Opus count on Anthropic', async () => {
+        const res = await count({ model: 'claude-opus-4-7', messages: [{ role: 'user', content: 'hi' }] });
+        assert.equal(res.status, 200, res.body);
+        assert.ok(anthropicCalls.at(-1).startsWith('/v1/messages/count_tokens'), anthropicCalls.at(-1));
+        assert.equal(lastAnthropicBody.max_tokens, undefined, 'counts take no max_tokens');
       });
     });
 

@@ -70,6 +70,7 @@ describe('cc-proxy', () => {
   let anthroMock, deepseekMock;
   let proxyProc;
   let proxyPort;
+  let lastAnthropicBody, lastDeepseekBody;
 
   function killProxy() {
     if (proxyProc && !proxyProc.killed) {
@@ -212,7 +213,8 @@ describe('cc-proxy', () => {
               res.end(JSON.stringify({ error: { message: 'bad key' } }));
               return;
             }
-            const m = JSON.parse(body || '{}').model || 'unknown';
+            lastAnthropicBody = JSON.parse(body || '{}');
+            const m = lastAnthropicBody.model || 'unknown';
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ id: 'msg_ant', model: m, stop_reason: 'end_turn', content: [{ type: 'text', text: 'anthropic' }] }));
             return;
@@ -240,7 +242,27 @@ describe('cc-proxy', () => {
               res.end(JSON.stringify({ error: 'anthropic-beta should be stripped' }));
               return;
             }
-            const m = JSON.parse(body || '{}').model || 'unknown';
+            lastDeepseekBody = JSON.parse(body || '{}');
+            // Mirror DeepSeek's strict checks on mid-conversation tool changes
+            // (measured against the live API, 2026-10-18).
+            const toolNames = new Set((lastDeepseekBody.tools || []).map((t) => t.name));
+            for (const msg of lastDeepseekBody.messages || []) {
+              if (!Array.isArray(msg.content)) continue;
+              for (const b of msg.content) {
+                if (b.type !== 'tool_addition') continue;
+                if (b.tool?.type !== 'tool_reference') {
+                  res.writeHead(422, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify({ error: { message: `unknown variant \`${b.tool?.type}\`, expected \`tool_reference\`` } }));
+                  return;
+                }
+                if (!toolNames.has(b.tool.name)) {
+                  res.writeHead(400, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify({ error: { message: `\`tool_addition\` references unknown tool '${b.tool.name}'` } }));
+                  return;
+                }
+              }
+            }
+            const m = lastDeepseekBody.model || 'unknown';
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ id: 'msg_ds', model: m, stop_reason: 'end_turn', content: [{ type: 'text', text: 'deepseek' }] }));
             return;
@@ -350,6 +372,81 @@ describe('cc-proxy', () => {
         { 'x-api-key': ANTHROPIC_KEY, 'anthropic-beta': 'true' }
       );
       assert.equal(res.status, 200);
+    });
+
+    // Claude Code's inline-tools beta announces tools that connect mid-session
+    // as tool_addition blocks carrying a full tool_definition. DeepSeek only
+    // accepts tool_addition -> tool_reference to a tool listed in `tools`.
+    describe('mid-conversation tool additions', () => {
+      const weather = {
+        name: 'get_weather',
+        description: 'Get the weather.',
+        input_schema: { type: 'object', properties: { city: { type: 'string' } } },
+        eager_input_streaming: true,
+      };
+      const noop = { name: 'noop', description: 'Does nothing.', input_schema: { type: 'object', properties: {} } };
+      const bodyWith = (model, tools, additions) => JSON.stringify({
+        model,
+        max_tokens: 100,
+        tools,
+        messages: [
+          { role: 'user', content: 'hi' },
+          { role: 'assistant', content: 'Hello.' },
+          { role: 'system', content: [{ type: 'text', text: 'Tools changed.' }, ...additions] },
+          { role: 'user', content: 'weather?' },
+        ],
+      });
+      const definition = (d) => ({ type: 'tool_addition', tool: { type: 'tool_definition', definition: d } });
+      const reference = (name) => ({ type: 'tool_addition', tool: { type: 'tool_reference', name } });
+      const post = (body) => httpRequest('POST', proxyPort, '/v1/messages', body, { 'x-api-key': ANTHROPIC_KEY });
+
+      it('rewrites a tool_definition into tools + tool_reference for DeepSeek', async () => {
+        const res = await post(bodyWith('deepseek-v4-pro', [noop], [definition(weather)]));
+        assert.equal(res.status, 200, res.body);
+        assert.deepEqual(lastDeepseekBody.tools.map((t) => t.name), ['noop', 'get_weather']);
+        assert.deepEqual(lastDeepseekBody.tools[1], weather);
+        assert.deepEqual(lastDeepseekBody.messages[2].content[1], reference('get_weather'));
+      });
+
+      it('adds tools when the request had no tools array', async () => {
+        const res = await post(bodyWith('deepseek-v4-pro', undefined, [definition(weather)]));
+        assert.equal(res.status, 200, res.body);
+        assert.deepEqual(lastDeepseekBody.tools.map((t) => t.name), ['get_weather']);
+      });
+
+      it('does not duplicate a tool already in tools', async () => {
+        const res = await post(bodyWith('deepseek-v4-pro', [noop, weather], [definition(weather)]));
+        assert.equal(res.status, 200, res.body);
+        assert.deepEqual(lastDeepseekBody.tools.map((t) => t.name), ['noop', 'get_weather']);
+      });
+
+      it('drops a tool_reference to a tool DeepSeek was not given', async () => {
+        const res = await post(bodyWith('deepseek-v4-pro', [noop], [reference('advisor'), reference('noop')]));
+        assert.equal(res.status, 200, res.body);
+        assert.deepEqual(lastDeepseekBody.messages[2].content, [{ type: 'text', text: 'Tools changed.' }, reference('noop')]);
+      });
+
+      it('drops a message left empty by the cleanup', async () => {
+        const body = JSON.parse(bodyWith('deepseek-v4-pro', [noop], []));
+        body.messages[2].content = [reference('advisor')];
+        const res = await post(JSON.stringify(body));
+        assert.equal(res.status, 200, res.body);
+        assert.deepEqual(lastDeepseekBody.messages.map((m) => m.role), ['user', 'assistant', 'user']);
+      });
+
+      it('applies to Sonnet requests rewritten to DeepSeek (mixed mode)', async () => {
+        const res = await post(bodyWith('claude-sonnet-4-6', [noop], [definition(weather)]));
+        assert.equal(res.status, 200, res.body);
+        assert.equal(lastDeepseekBody.model, 'deepseek-v4-pro');
+        assert.deepEqual(lastDeepseekBody.messages[2].content[1], reference('get_weather'));
+      });
+
+      it('leaves Anthropic-bound bodies unchanged', async () => {
+        const body = bodyWith('claude-opus-4-7', [noop], [definition(weather), reference('advisor')]);
+        const res = await post(body);
+        assert.equal(res.status, 200, res.body);
+        assert.deepEqual(lastAnthropicBody, JSON.parse(body));
+      });
     });
 
     it('injects DeepSeek models into /v1/models response', async () => {

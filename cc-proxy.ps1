@@ -76,6 +76,7 @@ $managedVars = @(
     'ANTHROPIC_DEFAULT_HAIKU_MODEL',
     'CLAUDE_CODE_SUBAGENT_MODEL',
     'CLAUDE_CODE_EFFORT_LEVEL',
+    'CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS',
     'ANTHROPIC_SMALL_FAST_MODEL'
 )
 
@@ -244,6 +245,11 @@ function Set-Mode {
             $env:ANTHROPIC_DEFAULT_HAIKU_MODEL  = 'deepseek-v4-flash'
             $env:CLAUDE_CODE_SUBAGENT_MODEL     = 'deepseek-v4-flash'
             $env:CLAUDE_CODE_EFFORT_LEVEL       = 'max'
+            # No proxy in the path here, so stop Claude Code from sending the
+            # inline-tools / mid-conversation tool-change blocks DeepSeek
+            # rejects with 422 'unknown variant tool_definition'. Mixed mode
+            # keeps the betas for Opus; the proxy rewrites DeepSeek-bound bodies.
+            $env:CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = '1'
 
             Write-Host "Claude Code configured for DeepSeek, all models." -ForegroundColor Green
         }

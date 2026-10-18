@@ -43,7 +43,27 @@ The proxy runs as a hidden background process. Logs go to `.logs/proxy-stdout.lo
 
 ### Linux / Mac
 
-The proxy itself (`server.js`) is plain Node.js — runs anywhere. The `cc-proxy.ps1` script is Windows-only; on Linux/Mac, set the env vars and start the proxy manually:
+`cc-proxy.sh` mirrors `cc-proxy.ps1` for bash. Put the keys in `~/.config/cc-proxy/env`:
+
+```bash
+mkdir -p ~/.config/cc-proxy
+printf 'DEEPSEEK_API_KEY=sk-your-key\n' > ~/.config/cc-proxy/env   # optional: ANTHROPIC_API_KEY=...
+chmod 600 ~/.config/cc-proxy/env
+```
+
+Then **source** it (so the env vars land in your shell) and run `claude`:
+
+```bash
+. ./cc-proxy.sh start mixed     # start the proxy + mixed routing
+. ./cc-proxy.sh deepseek        # all models via DeepSeek (no proxy)
+. ./cc-proxy.sh anthropic       # back to Claude Code defaults
+. ./cc-proxy.sh status          # proxy state + overrides in this shell
+. ./cc-proxy.sh stop            # stop the proxy (all shells) + reset
+```
+
+To call it from anywhere, symlink it: `ln -s "$PWD/cc-proxy.sh" ~/.local/bin/cc-proxy.sh`, then `. ~/.local/bin/cc-proxy.sh start mixed`. The script finds the repo through the link. The keys are loaded only into the proxy's process. Your shell gets none of them, except in `deepseek` mode, where the DeepSeek key becomes `ANTHROPIC_AUTH_TOKEN`. `CC_PROXY_PORT` and `CC_PROXY_ENV_FILE` override the port (3456) and the key file.
+
+Manual equivalent of mixed mode, without the script:
 
 ```bash
 export ANTHROPIC_BASE_URL=http://127.0.0.1:3456
@@ -60,8 +80,6 @@ node server.js &
 # Launch Claude Code
 claude
 ```
-
-A `cc-proxy.sh` for Linux/Mac is a welcome contribution.
 
 ## Configuration
 
@@ -190,7 +208,6 @@ This means:
 
 This is a first approach. Ideas for extension:
 
-- **Linux/Mac launcher**: `cc-proxy.sh` with equivalent functionality
 - **More providers**: OpenAI, Groq, local Ollama, vLLM endpoints
 - **Model name rewriting**: rename models on the fly (e.g. `claude-sonnet-4-6` → `deepseek-v4-pro`)
 - **Load balancing**: distribute requests across multiple keys or endpoints

@@ -100,7 +100,7 @@ _ccp_main() {
             # A marker, not a key: the proxy holds the DeepSeek key, sends every
             # model to DeepSeek, and never calls Anthropic for this shell.
             export ANTHROPIC_AUTH_TOKEN=cc-proxy-deepseek-only
-            export ANTHROPIC_MODEL=deepseek-v4-pro
+            export ANTHROPIC_MODEL='deepseek-v4-pro[1m]'
             # [1m] declares the real 1M window; Claude Code strips it before sending.
             export ANTHROPIC_DEFAULT_OPUS_MODEL='deepseek-v4-pro[1m]'
             export ANTHROPIC_DEFAULT_SONNET_MODEL='deepseek-v4-pro[1m]'
